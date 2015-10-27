@@ -213,14 +213,13 @@
           body-scroll-top (.-scrollTop body)
           current-scroll-left (.-scrollLeft parent)
           new-scroll-left (int (.-x (goog.style.getContainerOffsetToScrollInto container parent)))]
-      (let [scroller (or (.-scroll_handler parent)
-                         (set! (.-scroll_handler parent)
-                               ;; Store this on the parent so that we don't handle parent scroll while
-                               ;; the animation is playing
-                               (goog.fx.dom.Scroll. parent
-                                                    #js [0 0]
-                                                    #js [0 0]
-                                                    (if animate? 250 0))))
+      (let [scroller (set! (.-scroll_handler parent)
+                           ;; Store this on the parent so that we don't handle parent scroll while
+                           ;; the animation is playing
+                           (goog.fx.dom.Scroll. parent
+                                                #js [0 0]
+                                                #js [0 0]
+                                                (if animate? 250 0)))
             onEnd (.-onEnd scroller)]
         (set! (.-startPoint scroller) #js [current-scroll-left 0])
         (set! (.-endPoint scroller) #js [new-scroll-left 0])

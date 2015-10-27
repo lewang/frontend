@@ -19,7 +19,7 @@
                  ;; Prerelease version to avoid conflict with cljs.core/record?
                  ;; https://github.com/noprompt/ankha/commit/64423e04bf05459f96404ff087740bce1c9f9d37
                  [ankha "0.1.5.1-64423e"]
-                 [org.clojure/clojurescript "1.7.28"]
+                 [org.clojure/clojurescript "1.7.145"]
                  [org.clojure/core.async "0.1.346.0-17112a-alpha"]
                  [cljs-ajax "0.3.13"]
                  [cljsjs/react-with-addons "0.12.2-4"]

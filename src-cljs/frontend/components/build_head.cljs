@@ -8,13 +8,14 @@
             [frontend.models.feature :as feature]
             [frontend.models.test :as test-model]
             [frontend.components.builds-table :as builds-table]
+            [frontend.components.build :as build]
             [frontend.components.common :as common]
             [frontend.components.forms :as forms]
             [frontend.config :refer [intercom-enabled? github-endpoint env enterprise?]]
             [frontend.routes :as routes]
             [frontend.state :as state]
             [frontend.timer :as timer]
-            [frontend.utils :as utils :include-macros true]
+            [frontend.utils :as utils :include-macros true :refer [mlog merror]]
             [frontend.utils.github :as gh-utils]
             [frontend.utils.vcs-url :as vcs-url]
             [frontend.visualization.build :as viz-build]
@@ -736,22 +737,6 @@
           (dom/span nil "/~" (formatter past-ms))
           (dom/span nil ""))))))
 
-(defn default-tab
-  "The default tab to show in the build page head, if they have't clicked a different tab."
-  [build scopes]
-  (cond
-   ;; default to ssh-info for SSH builds
-   (build-model/ssh-enabled-now? build) :ssh-info
-   ;; default to the queue tab if the build is currently usage queued, and
-   ;; the user is has the right permissions (and is logged in).
-   (and (:read-settings scopes)
-        (build-model/in-usage-queue? build))
-   :usage-queue
-   ;; If there's no SSH info, build isn't finished, show the config
-   (build-model/running? build) :config
-   ;; Otherwise, just use the first one.
-   :else :tests))
-
 (def tab-link :a.tab-link)
 
 (defn build-sub-head [data owner]
@@ -764,8 +749,8 @@
             logged-in? (not (empty? user))
             admin? (:admin user)
             build (:build build-data)
-            selected-tab (or (:selected-header-tab build-data)
-                             (default-tab build scopes))
+            selected-tab (:selected-header-tab build-data)
+            selected-container (:selected-container data)
             build-id (build-model/id build)
             build-num (:build_num build)
             vcs-url (:vcs_url build)
@@ -781,19 +766,19 @@
            [:div.sub-head-top
             [:ul.nav.nav-tabs
              [:li {:class (when (= :commits selected-tab) "active")}
-              [tab-link {:href "#commits"} "Commit Log"]]
+              [tab-link {:href (str "#" (build/to-fragment "commits" selected-container))} "Commit Log"]]
 
             [:li {:class (when (= :config selected-tab) "active")}
-             [tab-link {:href "#config"} "circle.yml"]]
+             [tab-link {:href (str "#" (build/to-fragment "config" selected-container))} "circle.yml"]]
 
             (when (seq build-params)
               [:li {:class (when (= :build-parameters selected-tab) "active")}
-               [tab-link {:href "#build-parameters"} "Build Parameters"]])
+               [tab-link {:href (str "#" (build/to-fragment "build-parameters" selected-container))} "Build Parameters"]])
 
             (when (has-scope :read-settings data)
               [:li {:class (when (= :usage-queue selected-tab) "active")}
                [tab-link {:id "queued_explanation"
-                          :href "#usage-queue"} "Queue"
+                          :href (str "#" (build/to-fragment "usage-queue" selected-container))} "Queue"
                 (when (:usage_queued_at build)
                   [:span " ("
                    (om/build common/updating-duration {:start (:usage_queued_at build)
@@ -804,12 +789,12 @@
             (when (and (has-scope :write-settings data)
                        (not (feature/enabled-for-project? project :osx)))
               [:li {:class (when (= :ssh-info selected-tab) "active")}
-               [tab-link {:href "#ssh-info"} "Debug via SSH"]])
+               [tab-link {:href (str "#" (build/to-fragment "ssh-info" selected-container))} "Debug via SSH"]])
 
             ;; tests don't get saved until the end of the build (TODO: stream the tests!)
             (when (build-model/finished? build)
               [:li {:class (when (= :tests selected-tab) "active")}
-               [tab-link {:href "#tests"} (if (= "success" (:status build))
+               [tab-link {:href (str "#" (build/to-fragment "tests" selected-container))} (if (= "success" (:status build))
                                       "Test Results "
                                       "Test Failures ")
                 (when-let [fail-count (some->> build-data
@@ -822,12 +807,12 @@
 
             (when (and admin? (build-model/finished? build))
               [:li {:class (when (= :build-time-viz selected-tab) "active")}
-               [tab-link {:href "#build-time-viz"} "Build Timing"]])
+               [tab-link {:href (str "#" (build/to-fragment "build-time-viz" selected-container))} "Build Timing"]])
 
             ;; artifacts don't get uploaded until the end of the build (TODO: stream artifacts!)
             (when (and logged-in? (build-model/finished? build))
               [:li {:class (when (= :artifacts selected-tab) "active")}
-               [tab-link {:href "#artifacts"} "Artifacts"]])]]
+               [tab-link {:href (str "#" (build/to-fragment "artifacts" selected-container))} "Artifacts"]])]]
 
           [:div.sub-head-content
            (case selected-tab
@@ -1052,7 +1037,7 @@
                  "Report"])
               (when (and (build-model/can-cancel? build) (has-scope :write-settings data))
                 (forms/managed-button
-                  [:button.cancel-build
+                  [:button.cancel_build
                    {:data-loading-text "Canceling",
                     :title "Cancel this build",
                     :on-click #(raise! owner [:cancel-build-clicked {:build-id build-id
@@ -1155,8 +1140,8 @@
             logged-in? (not (empty? user))
             admin? (:admin user)
             build (:build build-data)
-            selected-tab (or (:selected-header-tab build-data)
-                             (default-tab build scopes))
+            selected-tab (:selected-header-tab build-data)
+            selected-container (:selected-container data)
             build-id (build-model/id build)
             build-num (:build_num build)
             vcs-url (:vcs_url build)
@@ -1174,9 +1159,10 @@
             ;; tests don't get saved until the end of the build (TODO: stream the tests!)
             (when (build-model/finished? build)
               [tab-tag {:class (when (= :tests selected-tab) "active")}
-               [tab-link-v2 {:href "#tests"} (if (= "success" (:status build))
-                                               "Test Results "
-                                               "Test Failures ")
+               [tab-link-v2 {:href (str "#" (build/to-fragment "tests" selected-container))}
+                (if (= "success" (:status build))
+                  "Test Results "
+                  "Test Failures ")
                 (when-let [fail-count (some->> build-data
                                                :tests-data
                                                :tests
@@ -1188,7 +1174,8 @@
             (when (has-scope :read-settings data)
               [tab-tag {:class (when (= :usage-queue selected-tab) "active")}
                [tab-link-v2 {:id "queued_explanation"
-                             :href "#usage-queue"} "Queue"
+                             :href (str "#" (build/to-fragment "usage-queue" selected-container))}
+                "Queue"
                 (when (:usage_queued_at build)
                   [:span " ("
                    (om/build common/updating-duration {:start (:usage_queued_at build)
@@ -1199,26 +1186,26 @@
             (when (and (has-scope :write-settings data)
                        (not (feature/enabled-for-project? project :osx)))
               [tab-tag {:class (when (= :ssh-info selected-tab) "active")}
-               [tab-link-v2 {:href "#ssh-info"}
+               [tab-link-v2 {:href (str "#" (build/to-fragment "ssh-info" selected-container))}
                 "Debug via SSH"]])
 
             ;; artifacts don't get uploaded until the end of the build (TODO: stream artifacts!)
             (when (and logged-in? (build-model/finished? build))
               [tab-tag {:class (when (= :artifacts selected-tab) "active")}
-               [tab-link-v2 {:href "#artifacts"}
+               [tab-link-v2 {:href (str "#" (build/to-fragment "artifacts" selected-container))}
                 "Artifacts"]])
 
             [tab-tag {:class (when (= :config selected-tab) "active")}
-             [tab-link-v2 {:href "#config"} "circle.yml"]]
+             [tab-link-v2 {:href (str "#" (build/to-fragment "config" selected-container))} "circle.yml"]]
 
             (when (and admin? (build-model/finished? build))
               [tab-tag {:class (when (= :build-time-viz selected-tab) "active")}
-               [tab-link-v2 {:href "#build-time-viz"}
+               [tab-link-v2 {:href (str "#" (build/to-fragment "build-time-viz" selected-container))}
                 "Build Timing"]])
 
             (when (seq build-params)
               [tab-tag {:class (when (= :build-parameters selected-tab) "active")}
-               [tab-link-v2 {:href "#build-parameters"} "Build Parameters"]])]]
+               [tab-link-v2 {:href (str "#" (build/to-fragment "build-parameters" selected-container))} "Build Parameters"]])]]
 
           [:div.card.sub-head-content {:class (str "sub-head-" (name selected-tab))}
            (case selected-tab
@@ -1303,12 +1290,12 @@
                                    :build build})
       ")"]]))
 
-(defrender previous-build-label [{:keys [previous] vcs-url :vcs_url} owner]
+(defrender previous-build-label [{:keys [previous vcs_url]} owner]
   (when-let [build-number (:build_num previous)]
     (html
       [:div.summary-item
        [:span.summary-label "Previous: "]
-       [:a {:href (routes/v1-build-path (vcs-url/org-name vcs-url) (vcs-url/repo-name vcs-url) build-number)}
+       [:a {:href (routes/v1-build-path (vcs-url/org-name vcs_url) (vcs-url/repo-name vcs_url) build-number)}
           build-number]])))
 
 (defn build-head-v2 [data owner]
